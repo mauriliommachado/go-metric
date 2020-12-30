@@ -15,7 +15,7 @@ var wapi *engine.WorkerAPI
 
 func main() {
 	fmt.Printf("hello, world\n")
-	wapi = engine.New(3)
+	wapi = engine.New(2)
 	wapi.Storage.MockMetrics()
 	initAPI()
 }
