@@ -14,8 +14,8 @@ type MetricDefinition struct {
 }
 
 //GetDefinitionKey todo
-func (metric MetricDefinition) GetDefinitionKey(event map[string]interface{}) string {
-	var target = fmt.Sprintf("%v", event[metric.Target])
+func (metric MetricDefinition) GetDefinitionKey(event Event) string {
+	var target = fmt.Sprintf("%v", event.Data[metric.Target])
 	var sb strings.Builder
 	sb.WriteString(metric.MetricType)
 	if metric.Aggregation != "" {
@@ -28,12 +28,12 @@ func (metric MetricDefinition) GetDefinitionKey(event map[string]interface{}) st
 }
 
 //AddMetricDef todo
-func (api *StorageAPI) AddMetricDef(metricDefinition MetricDefinition) {
+func (api *API) AddMetricDef(metricDefinition MetricDefinition) {
 	api.metricDefinitions = append(api.metricDefinitions, metricDefinition)
 }
 
 //MockMetrics asdasd
-func (api *StorageAPI) MockMetrics() {
+func (api *API) MockMetrics() {
 	api.AddMetricDef(MetricDefinition{Target: "client_id", Aggregation: "", MetricType: "count", Delta: 86400000})
 	api.AddMetricDef(MetricDefinition{Target: "client_id", Aggregation: "amount", MetricType: "sum", Delta: 86400000})
 	api.AddMetricDef(MetricDefinition{Target: "client_id", Aggregation: "amount", MetricType: "min", Delta: 86400000})

@@ -8,6 +8,6 @@ type MetricItem struct {
 }
 
 //GetItens asdasd
-func (api *StorageAPI) GetItens() map[string]MetricItem {
+func (api *API) GetItens() map[string]MetricItem {
 	return api.metricItens.GetMap()
 }
