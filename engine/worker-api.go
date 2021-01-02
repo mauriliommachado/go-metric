@@ -2,8 +2,7 @@ package engine
 
 import (
 	"fmt"
-	"math/bits"
-	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mauriliommachado/go-metric/storage"
@@ -12,6 +11,7 @@ import (
 // WorkerAPI asdas
 type WorkerAPI struct {
 	input           chan storage.Event
+	output          chan storage.Event
 	results         chan int
 	quit            chan int
 	Storage         *storage.API
@@ -23,29 +23,31 @@ type WorkerAPI struct {
 func New(numberOfWorkers int) *WorkerAPI {
 	var wapi WorkerAPI
 	wapi.numberOfWorkers = numberOfWorkers
-	wapi.input = make(chan storage.Event, 100)
+	wapi.input = make(chan storage.Event, 10)
+	wapi.output = make(chan storage.Event, 10)
 	wapi.results = make(chan int, 10)
 	wapi.quit = make(chan int)
 	wapi.Storage = storage.New()
-	wapi.newDeltaSlice(2)
+	wapi.newDeltaSlice(60000)
 	for i := 1; i <= numberOfWorkers; i++ {
-		go worker(i, &wapi)
+		go inputWorker(i, &wapi)
+	}
+	for i := 1; i <= numberOfWorkers; i++ {
+		go outputWorker(i, &wapi)
 	}
 	fmt.Println("Metric store initialized")
 	return &wapi
 }
 
-func worker(id int, wapi *WorkerAPI) {
-	fmt.Println("Worker", id, " waiting for work")
+func inputWorker(id int, wapi *WorkerAPI) {
+	fmt.Println("Input Worker", id, " waiting for work")
 	for {
 		select {
 		case event := <-wapi.input:
-			//fmt.Println(event, " data received on worker ", id)
 			ok := wapi.deltaSlice.Push(event)
 			if ok {
-				wapi.do(event)
+				wapi.do(event, true)
 			}
-			//fmt.Println("----------------------")
 		case <-wapi.quit:
 			fmt.Println("quit")
 			return
@@ -53,32 +55,40 @@ func worker(id int, wapi *WorkerAPI) {
 	}
 }
 
-func (wapi *WorkerAPI) do(event storage.Event) {
-	for _, metric := range wapi.Storage.GetMetricDefinitions() {
-		switch {
-		case metric.MetricType == "count":
-			wapi.doCount(metric, event)
-		case metric.MetricType == "sum":
-			wapi.doSum(metric, event)
-		case metric.MetricType == "max":
-			wapi.doMax(metric, event)
-		case metric.MetricType == "min":
-			wapi.doMin(metric, event)
-		default:
-			fmt.Println("Metric type unkown")
+func outputWorker(id int, wapi *WorkerAPI) {
+	fmt.Println("Output Worker", id, " waiting for work")
+	for {
+		select {
+		case event := <-wapi.output:
+			wapi.do(event, false)
+		case <-wapi.quit:
+			fmt.Println("quit")
+			return
 		}
 	}
 }
 
-func (wapi *WorkerAPI) undo(event storage.Event) {
+func (wapi *WorkerAPI) do(event storage.Event, inputEvent bool) {
+	var waitgroup sync.WaitGroup
 	for _, metric := range wapi.Storage.GetMetricDefinitions() {
 		switch {
 		case metric.MetricType == "count":
-			wapi.doUnCount(metric, event)
+			waitgroup.Add(1)
+			go wapi.doCount(metric, event, inputEvent, &waitgroup)
+		case metric.MetricType == "sum":
+			waitgroup.Add(1)
+			go wapi.doSum(metric, event, inputEvent, &waitgroup)
+		case metric.MetricType == "max":
+			waitgroup.Add(1)
+			go wapi.doMax(metric, event, inputEvent, &waitgroup)
+		case metric.MetricType == "min":
+			waitgroup.Add(1)
+			go wapi.doMin(metric, event, inputEvent, &waitgroup)
 		default:
-			//fmt.Println("Metric type unkown")
+			fmt.Println("Metric type unkown")
 		}
 	}
+	waitgroup.Wait()
 }
 
 func updatePartialSlices() {
@@ -99,66 +109,4 @@ func (wapi *WorkerAPI) SubmitWork(data map[string]interface{}) {
 
 func nowAsUnixMilli() int64 {
 	return time.Now().UnixNano() / 1e6
-}
-
-func (wapi *WorkerAPI) doMax(metric storage.MetricDefinition, event storage.Event) {
-	key := metric.GetDefinitionKey(event)
-	metricValue, ok := wapi.Storage.Get(key)
-	if !ok {
-		metricValue = storage.MetricItem{Key: key, Value: (1 << bits.UintSize) / -2}
-	}
-	eventValue, _ := strconv.Atoi(fmt.Sprintf("%v", event.Data[metric.Aggregation]))
-	if eventValue > metricValue.Value {
-		metricValue.Value = eventValue
-		//saving calculated metric value
-		wapi.Storage.Put(key, metricValue)
-	}
-}
-
-func (wapi *WorkerAPI) doMin(metric storage.MetricDefinition, event storage.Event) {
-	key := metric.GetDefinitionKey(event)
-	metricValue, ok := wapi.Storage.Get(key)
-	if !ok {
-		metricValue = storage.MetricItem{Key: key, Value: (1<<bits.UintSize)/2 - 1}
-	}
-	eventValue, _ := strconv.Atoi(fmt.Sprintf("%v", event.Data[metric.Aggregation]))
-	if eventValue < metricValue.Value {
-		metricValue.Value = eventValue
-		//saving calculated metric value
-		wapi.Storage.Put(key, metricValue)
-	}
-}
-
-func (wapi *WorkerAPI) doCount(metric storage.MetricDefinition, event storage.Event) {
-	key := metric.GetDefinitionKey(event)
-	metricValue, ok := wapi.Storage.Get(key)
-	if !ok {
-		metricValue = storage.MetricItem{Key: key, Value: 0}
-	}
-	metricValue.Value++
-	//fmt.Println(key, " metric value after", metricValue)
-	//saving calculated metric value
-	wapi.Storage.Put(key, metricValue)
-}
-
-func (wapi *WorkerAPI) doUnCount(metric storage.MetricDefinition, event storage.Event) {
-	key := metric.GetDefinitionKey(event)
-	fmt.Println(key)
-	metricValue, _ := wapi.Storage.Get(key)
-	metricValue.Value--
-	//fmt.Println(key, " metric value after", metricValue)
-	//saving calculated metric value
-	wapi.Storage.Put(key, metricValue)
-}
-
-func (wapi *WorkerAPI) doSum(metric storage.MetricDefinition, event storage.Event) {
-	key := metric.GetDefinitionKey(event)
-	metricValue, ok := wapi.Storage.Get(key)
-	if !ok {
-		metricValue = storage.MetricItem{Key: key, Value: 0}
-	}
-	aggregationValue, _ := strconv.Atoi(fmt.Sprintf("%v", event.Data[metric.Aggregation]))
-	metricValue.Value = metricValue.Value + aggregationValue
-	//saving calculated metric value
-	wapi.Storage.Put(key, metricValue)
 }

@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/mauriliommachado/go-metric/storage"
 )
@@ -37,8 +37,12 @@ func (s *DeltaSlice) cleanUpSlice() {
 	indexToRemove = -1
 	for i, event := range s.Items {
 		if !s.EventBelongs(event) {
-			s.api.undo(event)
+			var waitgroup sync.WaitGroup
+			s.api.do(event, false)
+			waitgroup.Wait()
 			indexToRemove = i
+		} else {
+			break
 		}
 	}
 	if indexToRemove > -1 {
@@ -65,7 +69,7 @@ func (s *DeltaSlice) EventBelongs(event storage.Event) bool {
 	if s.IsEmpty() {
 		return true
 	}
-	fmt.Println("event with timestamp ", event.Timestamp, " with clock ", s.clock, " with delta ", s.Delta, " is ", event.Timestamp > (s.clock-s.Delta))
+	//fmt.Println("event with timestamp ", event.Timestamp, " with clock ", s.clock, " with delta ", s.Delta, " is ", event.Timestamp > (s.clock-s.Delta))
 	return event.Timestamp > (s.clock - s.Delta)
 }
 
